@@ -1,0 +1,277 @@
+--[[
+    FLY EXPLOIT GUI SCRIPT - Versi Lengkap Pink Soft & Draggable
+    Fitur: Normal Fly, CFrame Fly (CFly), NoClip, Speed Slider, Transparency Setting, Dragging.
+    Warna Utama: Pink Soft
+--]]
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local Player = Players.LocalPlayer
+local Character = Player.Character or Player.CharacterAdded:Wait()
+local Humanoid = Character:WaitForChild("Humanoid")
+local RootPart = Character:WaitForChild("HumanoidRootPart")
+
+-- GUI References (PASTIKAN NAMA KOMPONEN ANDA SAMA)
+local MainFrame = script.Parent
+local FlyButton = MainFrame:WaitForChild("FlyButton")
+local CFlyButton = MainFrame:WaitForChild("CFlyToggle")
+local SpeedSlider = MainFrame:WaitForChild("SpeedSlider")
+local SpeedValueText = SpeedSlider:WaitForChild("ValueText")
+local TransparencyInput = MainFrame:WaitForChild("TransparencyInput")
+local CloseButton = MainFrame:WaitForChild("CloseButton")
+local MinimizeButton = MainFrame:WaitForChild("MinimizeButton")
+
+-- State Variables
+local isFlying = false
+local isCFlyActive = false
+local currentFlySpeed = 50 
+local flyVelocity = Vector3.new(0, 0, 0)
+local noClipActivated = false
+local connections = {}
+
+-- Warna Pink Soft
+local MAIN_PINK_SOFT = Color3.fromRGB(255, 204, 255)  -- Pink Soft / Lavender Blush (Background Utama)
+local ACCENT_PINK = Color3.fromRGB(255, 153, 204)     -- Pink Medium (Aksen Tombol)
+local ACTIVE_PINK = Color3.fromRGB(255, 102, 153)     -- Pink Gelap (Tombol Aktif)
+
+-- Anti Multi Gui Loaded Guardrail
+if Player:GetAttribute("FlyGuiLoaded") then
+    MainFrame:Destroy()
+    warn("Anti Multi Gui Loaded: GUI ganda terdeteksi dan dihancurkan.")
+    return
+else
+    Player:SetAttribute("FlyGuiLoaded", true)
+end
+
+--------------------------------------------------------------------------------
+-- FLY CORE FUNCTIONS
+--------------------------------------------------------------------------------
+
+-- #1: NORMAL FLY
+local function enableNormalFly()
+    RootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+    
+    -- Deaktivasi gravitasi dan Collision
+    RootPart.Massless = true
+    RootPart.CanCollide = false
+    
+    -- Aktifkan NoClip 
+    noClipActivated = true
+    for _, part in ipairs(Character:GetChildren()) do
+        if part:IsA("BasePart") then
+            part.CanCollide = false
+        end
+    end
+    
+    -- Binding untuk pergerakan terbang
+    connections.RenderStepped = RunService.RenderStepped:Connect(function()
+        -- Kontrol Normal Fly (Maju, Mundur, Samping)
+        local moveVector = UserInputService:GetDeviceMovementVector()
+        local relativeMove = RootPart.CFrame:VectorToWorldSpace(moveVector)
+        
+        -- Kontrol Atas/Bawah (Q dan E)
+        local verticalMove = 0
+        if UserInputService:IsKeyDown(Enum.KeyCode.Q) then
+            verticalMove = 1
+        elseif UserInputService:IsKeyDown(Enum.KeyCode.E) then
+            verticalMove = -1
+        end
+
+        flyVelocity = (relativeMove * Vector3.new(1, 0, 1) + Vector3.new(0, verticalMove, 0)) * currentFlySpeed
+        RootPart.CFrame = RootPart.CFrame + flyVelocity * RunService.Heartbeat:Wait()
+    end)
+    
+    FlyButton.Text = "Stop Fly"
+    FlyButton.BackgroundColor3 = ACTIVE_PINK -- Pink Gelap (Aktif)
+end
+
+local function disableNormalFly()
+    -- Putuskan semua koneksi
+    for _, connection in pairs(connections) do
+        connection:Disconnect()
+    end
+    connections = {}
+    
+    -- Kembalikan properti RootPart
+    RootPart.Massless = false
+    RootPart.CanCollide = true
+    
+    -- Deaktivasi NoClip
+    noClipActivated = false
+    for _, part in ipairs(Character:GetChildren()) do
+        if part:IsA("BasePart") then
+            part.CanCollide = true
+        end
+    end
+    
+    FlyButton.Text = "Start Fly"
+    FlyButton.BackgroundColor3 = ACCENT_PINK -- Pink Medium (Non-aktif)
+end
+
+-- #2: CFRAME FLY (CFly)
+local function enableCFly()
+    RootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+    RootPart.Massless = true
+    RootPart.CanCollide = false
+    
+    -- Aktifkan NoClip
+    noClipActivated = true
+    for _, part in ipairs(Character:GetChildren()) do
+        if part:IsA("BasePart") then
+            part.CanCollide = false
+        end
+    end
+
+    -- Loop pergerakan CFly (Hanya Maju/Mundur, Samping)
+    connections.RenderStepped = RunService.RenderStepped:Connect(function(dt)
+        local moveVector = UserInputService:GetDeviceMovementVector()
+        local delta = RootPart.CFrame.lookVector * moveVector.Z + RootPart.CFrame.rightVector * moveVector.X
+        
+        RootPart.CFrame = RootPart.CFrame + delta * currentFlySpeed * dt
+    end)
+    
+    FlyButton.Text = "Stop Fly (CF)"
+    FlyButton.BackgroundColor3 = ACTIVE_PINK -- Pink Gelap (CFly Aktif)
+end
+
+--------------------------------------------------------------------------------
+-- GUI INTERACTION HANDLERS
+--------------------------------------------------------------------------------
+
+-- Handle Fly Button Click
+FlyButton.MouseButton1Click:Connect(function()
+    isFlying = not isFlying
+    
+    if isFlying then
+        if isCFlyActive then
+            enableCFly()
+        else
+            enableNormalFly()
+        end
+    else
+        disableNormalFly()
+    end
+end)
+
+-- Handle CFly Toggle Button Click
+CFlyButton.MouseButton1Click:Connect(function()
+    isCFlyActive = not isCFlyActive
+    CFlyButton.Text = isCFlyActive and "CF Toggle: ON" or "CF Toggle: OFF"
+    CFlyButton.BackgroundColor3 = isCFlyActive and ACTIVE_PINK or ACCENT_PINK
+    
+    -- Jika sedang terbang, matikan dulu agar bisa memulai mode yang baru
+    if isFlying then
+        disableNormalFly()
+        isFlying = false
+    end
+end)
+
+-- Handle Speed Slider Change
+SpeedSlider.Changed:Connect(function(property)
+    if property == "Value" then
+        currentFlySpeed = SpeedSlider.Value
+        SpeedValueText.Text = "Speed: " .. math.floor(currentFlySpeed)
+    end
+end)
+
+-- Handle Transparency Textbox Input
+local function updateTransparency(input)
+    local success, value = pcall(tonumber, input)
+    if success and value ~= nil then
+        -- Batasi nilai transparansi antara 0 dan 1
+        local transparencyValue = math.clamp(value, 0, 1)
+        MainFrame.BackgroundTransparency = transparencyValue
+    end
+end
+
+TransparencyInput.FocusLost:Connect(function(enterPressed)
+    if enterPressed then
+        updateTransparency(TransparencyInput.Text)
+    end
+end)
+
+-- Handle Close Button
+CloseButton.MouseButton1Click:Connect(function()
+    if isFlying then
+        disableNormalFly()
+    end
+    MainFrame:Destroy()
+    Player:SetAttribute("FlyGuiLoaded", nil)
+end)
+
+-- Handle Minimize Button
+MinimizeButton.MouseButton1Click:Connect(function()
+    local isMinimized = MainFrame.Size.Y.Scale < 0.2
+    
+    if isMinimized then
+        -- Restore 
+        MainFrame:TweenSize(UDim2.new(0.2, 0, 0.3, 0), "Out", "Quad", 0.3)
+        MinimizeButton.Text = "-"
+    else
+        -- Minimize
+        MainFrame:TweenSize(UDim2.new(0.2, 0, 0.05, 0), "Out", "Quad", 0.3)
+        MinimizeButton.Text = "+"
+    end
+end)
+
+--------------------------------------------------------------------------------
+-- DRAGGING FUNCTIONALITY (GESER PANEL)
+--------------------------------------------------------------------------------
+
+local dragging = false
+local dragStart = Vector2.new()
+local startPosition = UDim2.new()
+
+MainFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPosition = MainFrame.Position
+        input.Handled = true
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType.Touch) then
+        local delta = input.Position - dragStart
+        MainFrame.Position = UDim2.new(startPosition.X.Scale, startPosition.X.Offset + delta.X, startPosition.Y.Scale, startPosition.Y.Offset + delta.Y)
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end)
+
+--------------------------------------------------------------------------------
+-- INITIALIZATION & CHARACTER RESPAWN HANDLER
+--------------------------------------------------------------------------------
+
+-- Atur Warna Default MainFrame ke Pink Soft
+MainFrame.BackgroundColor3 = MAIN_PINK_SOFT
+
+-- Atur Warna Default Tombol
+FlyButton.BackgroundColor3 = ACCENT_PINK
+CFlyButton.BackgroundColor3 = ACCENT_PINK
+
+-- Set Initial Default States
+MainFrame.BackgroundTransparency = 0.75
+TransparencyInput.Text = "0.75"
+
+currentFlySpeed = SpeedSlider.Value
+SpeedValueText.Text = "Speed: " .. math.floor(currentFlySpeed)
+
+-- Event listener saat karakter di-load ulang (Mati)
+Player.CharacterAdded:Connect(function(newCharacter)
+    Character = newCharacter
+    Humanoid = newCharacter:WaitForChild("Humanoid")
+    RootPart = newCharacter:WaitForChild("HumanoidRootPart")
+    
+    if isFlying then
+        isFlying = false
+        disableNormalFly()
+    end
+end)
