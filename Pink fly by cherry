@@ -1,0 +1,423 @@
+-- ===============================================
+-- LUA FLY GUI SCRIPT (Minimalist Toggle Only - CFly Enhanced)
+-- ===============================================
+
+-- Check if GUI is already loaded (Anti Multi Gui Loaded)
+if game.CoreGui:FindFirstChild("FlyPanel_Linux") then
+    game.CoreGui.FlyPanel_Linux:Destroy()
+end
+
+-- Global Variables
+local Player = game.Players.LocalPlayer
+local Character = Player.Character or Player.CharacterAdded:Wait()
+local Humanoid = Character:WaitForChild("Humanoid")
+
+-- Fly Status
+local isFlying = false
+local isCFrameFly = false -- FALSE: Normal BodyVelocity Fly (No Fall), TRUE: CFrame Fly (No Fall + Noclip)
+local defaultTransparency = 0.75
+local flySpeed = 50 
+local FRAME_SIZE_Y = 210 
+
+-- Utility function for Noclip
+local function ToggleNoclip(enabled)
+    local char = Character
+    if not char then return end
+    
+    for i, part in pairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then
+            -- Only toggle CanCollide if CFly mode is active
+            if isCFrameFly then
+                part.CanCollide = not enabled
+            else
+                -- When switching back, ensure CanCollide is restored to TRUE
+                part.CanCollide = true
+            end
+        end
+    end
+end
+
+-- ===============================================
+-- CORE FLY FUNCTIONS
+-- ===============================================
+
+-- Function to enable Fly
+local function EnableFly()
+    if not isFlying then
+        -- Save old data for reset
+        local oldWalkSpeed = Humanoid.WalkSpeed
+        local oldGravity = game.Workspace.Gravity
+
+        local RootPart = Character:WaitForChild("HumanoidRootPart")
+
+        isFlying = true
+        
+        -- Disable Normal Physics (No Fall)
+        Humanoid.PlatformStand = true
+        game.Workspace.Gravity = 0
+
+        -- Setup CFrame Fly or BodyVelocity Fly
+        if isCFrameFly then
+            -- CFly Mode: Noclip enabled
+            ToggleNoclip(true) 
+            
+            -- Destroy BodyVelocity if it exists from Normal Fly mode
+            local oldBodyV = RootPart:GetAttribute("BodyVelocity")
+            if oldBodyV and oldBodyV.Parent then oldBodyV:Destroy() end
+            
+            print("[CFly] CFrame Fly Enabled (Noclip + No Fall). Speed: " .. flySpeed)
+            
+        else
+            -- Normal Fly Mode: BodyVelocity (for horizontal input compatibility)
+            ToggleNoclip(false) -- Ensure Noclip is off in normal mode
+            
+            local bodyV = Instance.new("BodyVelocity")
+            bodyV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+            bodyV.Velocity = Vector3.new(0, 0, 0)
+            bodyV.Parent = RootPart
+            RootPart:SetAttribute("BodyVelocity", bodyV)
+            
+            -- BodyVelocity Loop (maintains Y position)
+            local conns = {}
+            conns.RenderStepped = game:GetService("RunService").RenderStepped:Connect(function()
+                if isFlying and not isCFrameFly then
+                    -- Ensure no vertical fall (Y Force = 0)
+                    bodyV.Velocity = Vector3.new(bodyV.Velocity.X, 0, bodyV.Velocity.Z)
+                    Humanoid.WalkSpeed = flySpeed 
+                end
+            end)
+            RootPart:SetAttribute("FlyConnections", conns)
+            
+            print("[Fly] Normal Fly Enabled (No Fall). Speed: " .. flySpeed)
+        end
+        
+        -- Save reset data
+        RootPart:SetAttribute("OldWalkSpeed", oldWalkSpeed)
+        RootPart:SetAttribute("OldGravity", oldGravity)
+    end
+end
+
+-- Function to disable Fly
+local function DisableFly()
+    if isFlying then
+        isFlying = false
+        Humanoid.PlatformStand = false
+        
+        local RootPart = Character:FindFirstChild("HumanoidRootPart")
+        if RootPart then
+            local conns = RootPart:GetAttribute("FlyConnections")
+            local oldWalkSpeed = RootPart:GetAttribute("OldWalkSpeed")
+            local oldGravity = RootPart:GetAttribute("OldGravity")
+            local bodyV = RootPart:GetAttribute("BodyVelocity")
+
+            if conns then
+                for _, conn in pairs(conns) do
+                    conn:Disconnect()
+                end
+                RootPart:SetAttribute("FlyConnections", nil)
+            end
+
+            if bodyV and bodyV.Parent then
+                bodyV:Destroy()
+                RootPart:SetAttribute("BodyVelocity", nil)
+            end
+            
+            -- Reset Physics and Noclip
+            ToggleNoclip(false) 
+            game.Workspace.Gravity = oldGravity or 196.2
+            Humanoid.WalkSpeed = oldWalkSpeed or 16
+
+            RootPart:SetAttribute("OldWalkSpeed", nil)
+            RootPart:SetAttribute("OldGravity", nil)
+        end
+        print("[Fly] Fly Disabled.")
+    end
+end
+
+-- Function to toggle CFly mode
+local function ToggleCFrameFlyMode()
+    isCFrameFly = not isCFrameFly
+    -- If Fly is currently active, disable and re-enable to switch mode instantly
+    if isFlying then
+        DisableFly()
+        EnableFly()
+    end
+end
+
+-- CFly Main Loop (Handles CFrame movement)
+local function CFrameFlyLoop()
+    local RootPart = Character:WaitForChild("HumanoidRootPart")
+    
+    game:GetService("RunService").Heartbeat:Connect(function(dt)
+        if isFlying and isCFrameFly then
+            
+            local direction = Vector3.new(0, 0, 0)
+            local CF = RootPart.CFrame
+            local speed = flySpeed * dt
+            
+            -- Check Keyboard Input (For PC/Emulators)
+            local UserInputService = game:GetService("UserInputService")
+            
+            if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+                direction = direction + CF.lookVector
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+                direction = direction - CF.lookVector
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+                direction = direction + CF.rightVector
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+                direction = direction - CF.rightVector
+            end
+            
+            -- CFrame Horizontal Movement
+            if direction.Magnitude > 0 then
+                local horizontalDirection = direction.unit * speed
+                -- Remove Y component (ensures no up/down movement)
+                horizontalDirection = Vector3.new(horizontalDirection.X, 0, horizontalDirection.Z)
+                RootPart.CFrame = RootPart.CFrame + horizontalDirection
+            end
+            
+        end
+    end)
+end
+CFrameFlyLoop()
+
+-- ===============================================
+-- GUI SETUP (Linux UI Pink)
+-- ===============================================
+
+-- Main ScreenGui
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "FlyPanel_Linux"
+ScreenGui.Parent = game.CoreGui
+
+-- Main Frame
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Size = UDim2.new(0, 200, 0, FRAME_SIZE_Y) 
+MainFrame.Position = UDim2.new(0.5, -100, 0.5, -(FRAME_SIZE_Y/2))
+MainFrame.BackgroundColor3 = Color3.fromRGB(45, 45, 45) 
+MainFrame.BorderColor3 = Color3.fromRGB(255, 105, 180) -- Pink
+MainFrame.BorderSizePixel = 2
+MainFrame.Draggable = true 
+MainFrame.Parent = ScreenGui
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 6)
+UICorner.Parent = MainFrame
+
+-- Header
+local Header = Instance.new("Frame")
+Header.Name = "Header"
+Header.Size = UDim2.new(1, 0, 0, 30)
+Header.BackgroundColor3 = Color3.fromRGB(255, 105, 180) -- Pink
+Header.Parent = MainFrame
+
+local Title = Instance.new("TextLabel")
+Title.Name = "Title"
+Title.Size = UDim2.new(1, -70, 1, 0) 
+Title.Position = UDim2.new(0, 0, 0, 0)
+Title.BackgroundColor3 = Color3.fromRGB(255, 105, 180)
+Title.Text = "🌸 Fly Panel" 
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.Font = Enum.Font.SourceSansBold
+Title.TextSize = 18
+Title.Parent = Header
+
+-- Exit Button
+local ExitButton = Instance.new("TextButton")
+ExitButton.Name = "ExitButton"
+ExitButton.Size = UDim2.new(0, 20, 0, 20)
+ExitButton.Position = UDim2.new(1, -25, 0, 5)
+ExitButton.BackgroundColor3 = Color3.fromRGB(231, 76, 60) -- Red
+ExitButton.Text = "X"
+ExitButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+ExitButton.Font = Enum.Font.SourceSansBold
+ExitButton.TextSize = 14
+ExitButton.Parent = Header
+
+ExitButton.MouseButton1Click:Connect(function()
+    DisableFly() 
+    ScreenGui:Destroy()
+end)
+
+-- Minimize Button
+local MinimizeButton = Instance.new("TextButton")
+MinimizeButton.Name = "MinimizeButton"
+MinimizeButton.Size = UDim2.new(0, 20, 0, 20)
+MinimizeButton.Position = UDim2.new(1, -50, 0, 5)
+MinimizeButton.BackgroundColor3 = Color3.fromRGB(241, 196, 15) -- Yellow
+MinimizeButton.Text = "-"
+MinimizeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+MinimizeButton.Font = Enum.Font.SourceSansBold
+MinimizeButton.TextSize = 14
+MinimizeButton.Parent = Header
+
+MinimizeButton.MouseButton1Click:Connect(function()
+    local isMinimized = MainFrame.Size.Y.Offset < 50
+    if isMinimized then
+        MainFrame:TweenSize(UDim2.new(0, 200, 0, FRAME_SIZE_Y), Enum.EasingDirection.Out, Enum.EasingStyle.Quart, 0.2)
+    else
+        MainFrame:TweenSize(UDim2.new(0, 200, 0, 30), Enum.EasingDirection.Out, Enum.EasingStyle.Quart, 0.2)
+    end
+end)
+
+-- CFrameFly / CFly Mode Toggle Button
+local CFlyButton = Instance.new("TextButton")
+CFlyButton.Name = "CFlyButton"
+CFlyButton.Size = UDim2.new(0, 20, 0, 20)
+CFlyButton.Position = UDim2.new(1, -75, 0, 5) 
+CFlyButton.BackgroundColor3 = Color3.fromRGB(155, 89, 182) -- Default Purple/Neutral
+CFlyButton.Text = "CF"
+CFlyButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+CFlyButton.Font = Enum.Font.SourceSansBold
+CFlyButton.TextSize = 12
+CFlyButton.Parent = Header
+
+CFlyButton.MouseButton1Click:Connect(function()
+    ToggleCFrameFlyMode()
+    if isCFrameFly then
+        CFlyButton.BackgroundColor3 = Color3.fromRGB(46, 204, 113) -- Green (ON)
+        print("[CFly] CFrameFly Mode Activated.")
+    else
+        CFlyButton.BackgroundColor3 = Color3.fromRGB(155, 89, 182) -- Purple (OFF)
+        print("[CFly] Normal Fly Mode Activated.")
+    end
+end)
+
+-- MAIN CONTENT
+local Content = Instance.new("Frame")
+Content.Name = "Content"
+Content.Size = UDim2.new(1, 0, 1, -30)
+Content.Position = UDim2.new(0, 0, 0, 30)
+Content.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+Content.Parent = MainFrame
+
+-- Main Fly Toggle Button
+local FlyToggleButton = Instance.new("TextButton")
+FlyToggleButton.Name = "FlyButton"
+FlyToggleButton.Size = UDim2.new(1, -20, 0, 40)
+FlyToggleButton.Position = UDim2.new(0, 10, 0, 10)
+FlyToggleButton.BackgroundColor3 = Color3.fromRGB(192, 57, 43) -- Red (OFF)
+FlyToggleButton.Text = "FLY (OFF)"
+FlyToggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+FlyToggleButton.Font = Enum.Font.SourceSansBold
+FlyToggleButton.TextSize = 20
+FlyToggleButton.Parent = Content
+
+FlyToggleButton.MouseButton1Click:Connect(function()
+    if isFlying then
+        DisableFly()
+        FlyToggleButton.BackgroundColor3 = Color3.fromRGB(192, 57, 43) 
+        FlyToggleButton.Text = "FLY (OFF)"
+    else
+        EnableFly()
+        FlyToggleButton.BackgroundColor3 = Color3.fromRGB(39, 174, 96) -- Green (ON)
+        FlyToggleButton.Text = "FLY (ON)"
+    end
+end)
+
+-- Fly Speed Text Box
+local SpeedLabel = Instance.new("TextLabel")
+SpeedLabel.Name = "SpeedLabel"
+SpeedLabel.Size = UDim2.new(1, -20, 0, 20)
+SpeedLabel.Position = UDim2.new(0, 10, 0, 60)
+SpeedLabel.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+SpeedLabel.Text = "Fly Speed: " .. flySpeed
+SpeedLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+SpeedLabel.Font = Enum.Font.SourceSans
+SpeedLabel.TextSize = 14
+SpeedLabel.TextXAlignment = Enum.TextXAlignment.Left
+SpeedLabel.BackgroundTransparency = 1
+SpeedLabel.Parent = Content
+
+local SpeedTextBox = Instance.new("TextBox")
+SpeedTextBox.Name = "SpeedTextBox"
+SpeedTextBox.Size = UDim2.new(1, -20, 0, 30)
+SpeedTextBox.Position = UDim2.new(0, 10, 0, 85)
+SpeedTextBox.BackgroundColor3 = Color3.fromRGB(52, 73, 94)
+SpeedTextBox.Text = tostring(flySpeed)
+SpeedTextBox.PlaceholderText = "Enter speed (e.g., 50)"
+SpeedTextBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+SpeedTextBox.Font = Enum.Font.SourceSans
+SpeedTextBox.TextSize = 16
+SpeedTextBox.Parent = Content
+
+SpeedTextBox.FocusLost:Connect(function(enterPressed)
+    if enterPressed then
+        local newSpeed = tonumber(SpeedTextBox.Text)
+        if newSpeed and newSpeed > 0 then
+            flySpeed = newSpeed
+            SpeedLabel.Text = "Fly Speed: " .. flySpeed
+            print("[Fly] Speed changed to: " .. flySpeed)
+        else
+            SpeedTextBox.Text = tostring(flySpeed) 
+        end
+    end
+end)
+
+-- Transparency Textbox
+local TransLabel = Instance.new("TextLabel")
+TransLabel.Name = "TransLabel"
+TransLabel.Size = UDim2.new(1, -20, 0, 20)
+TransLabel.Position = UDim2.new(0, 10, 0, 125)
+TransLabel.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+TransLabel.Text = "Transparency (0-1): " .. defaultTransparency
+TransLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+TransLabel.Font = Enum.Font.SourceSans
+TransLabel.TextSize = 14
+TransLabel.TextXAlignment = Enum.TextXAlignment.Left
+TransLabel.BackgroundTransparency = 1
+TransLabel.Parent = Content
+
+local TransTextBox = Instance.new("TextBox")
+TransTextBox.Name = "TransTextBox"
+TransTextBox.Size = UDim2.new(1, -20, 0, 30)
+TransTextBox.Position = UDim2.new(0, 10, 0, 150)
+TransTextBox.BackgroundColor3 = Color3.fromRGB(52, 73, 94)
+TransTextBox.Text = tostring(defaultTransparency)
+TransTextBox.PlaceholderText = "Enter 0.0 to 1.0 (0.75 default)"
+TransTextBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+TransTextBox.Font = Enum.Font.SourceSans
+TransTextBox.TextSize = 16
+TransTextBox.Parent = Content
+
+TransTextBox.FocusLost:Connect(function(enterPressed)
+    if enterPressed then
+        local newTrans = tonumber(TransTextBox.Text)
+        if newTrans and newTrans >= 0 and newTrans <= 1 then
+            defaultTransparency = newTrans
+            
+            -- Apply transparency to main elements
+            MainFrame.BackgroundTransparency = newTrans
+            Header.BackgroundTransparency = newTrans
+            Title.BackgroundTransparency = newTrans
+            ExitButton.BackgroundTransparency = newTrans
+            MinimizeButton.BackgroundTransparency = newTrans
+            CFlyButton.BackgroundTransparency = newTrans
+            
+            Content.BackgroundTransparency = 0 
+            FlyToggleButton.BackgroundTransparency = 0
+            SpeedTextBox.BackgroundTransparency = 0
+            TransTextBox.BackgroundTransparency = 0
+
+            TransLabel.Text = "Transparency (0-1): " .. string.format("%.2f", defaultTransparency)
+            print("[GUI] Transparency changed to: " .. string.format("%.2f", defaultTransparency))
+        else
+            TransTextBox.Text = string.format("%.2f", defaultTransparency) 
+        end
+    end
+end)
+
+-- Apply initial transparency
+MainFrame.BackgroundTransparency = defaultTransparency
+Header.BackgroundTransparency = defaultTransparency
+Title.BackgroundTransparency = defaultTransparency
+ExitButton.BackgroundTransparency = defaultTransparency
+MinimizeButton.BackgroundTransparency = defaultTransparency
+CFlyButton.BackgroundTransparency = defaultTransparency
+
+SpeedLabel.BackgroundTransparency = 1
+TransLabel.BackgroundTransparency = 1
